@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatHub - My Adda</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="chat-page">
+    <div class="chat-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>ChatHub</h2>
+                <div class="user-profile-btn" onclick="toggleProfileMenu()">
+                    <span class="profile-avatar">👤</span>
+                </div>
+                <div id="profileMenu" class="profile-menu" style="display: none;">
+                    <button onclick="viewProfile()">👤 My Profile</button>
+                    <button onclick="logout()">🚪 Logout</button>
+                </div>
+            </div>
+
+            <div class="search-box">
+                <input type="text" id="searchBox" placeholder="Search users..." onkeyup="searchUsers()">
+            </div>
+
+            <!-- Friends List -->
+            <div class="friends-section">
+                <h3>Friends</h3>
+                <div id="friendsList" class="friends-list">
+                    <p>No friends yet. Add someone!</p>
+                </div>
+            </div>
+
+            <!-- Users to Add -->
+            <div class="users-section">
+                <h3>Add Friends</h3>
+                <div id="usersList" class="users-list">
+                    <p>Loading users...</p>
+                </div>
+            </div>
+
+            <!-- Admin Panel (if admin) -->
+            <div id="adminPanel" class="admin-panel" style="display: none;">
+                <h3>⚙️ Admin Panel</h3>
+                <button onclick="viewAllUsers()">📋 All Users</button>
+                <button onclick="viewAllChats()">💬 All Chats</button>
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <div class="chat-main">
+            <div class="chat-header">
+                <div id="chatInfo">
+                    <p>Welcome to ChatHub! Select a friend to start chatting.</p>
+                </div>
+            </div>
+
+            <div id="chatMessages" class="chat-messages">
+                <div class="welcome-message">
+                    <h2>Welcome to My Adda</h2>
+                    <p>Select a friend from the left to start chatting!</p>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="typing-indicator" id="typingIndicator" style="display: none;">
+                    <p>Someone is typing...</p>
+                </div>
+                <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                <div class="input-controls">
+                    <button class="control-btn" onclick="triggerImageInput()" title="Send Image">🖼️</button>
+                    <input type="text" id="messageInput" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
+                    <button class="control-btn send-btn" onclick="sendMessage()" title="Send">📤</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for Profile -->
+        <div id="profileModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <span class="close" onclick="closeProfileModal()">&times;</span>
+                <h2>My Profile</h2>
+                <div id="profileContent"></div>
+                <button onclick="closeProfileModal()" class="btn btn-primary">Close</button>
+            </div>
+        </div>
+
+        <!-- Modal for Admin Users -->
+        <div id="usersModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <span class="close" onclick="closeUsersModal()">&times;</span>
+                <h2>All Users</h2>
+                <div id="usersContent"></div>
+                <button onclick="closeUsersModal()" class="btn btn-primary">Close</button>
+            </div>
+        </div>
+
+        <!-- Modal for Admin Chats -->
+        <div id="chatsModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <span class="close" onclick="closeChatsModal()">&times;</span>
+                <h2>All Chats</h2>
+                <div id="chatsContent"></div>
+                <button onclick="closeChatsModal()" class="btn btn-primary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        let currentUser = null;
+        let selectedFriend = null;
+        let socket = null;
+        let onlineUsers = [];
+
+        // Initialize
+        window.addEventListener('load', () => {
+            const userStr = localStorage.getItem('user');
+            if (!userStr) {
+                window.location.href = 'login.html';
+                return;
+            }
+
+            currentUser = JSON.parse(userStr);
+            
+            // Show admin panel if admin
+            if (currentUser.isAdmin) {
+                document.getElementById('adminPanel').style.display = 'block';
+            }
+
+            // Initialize Socket.io
+            socket = io();
+            socket.emit('user_login', currentUser.id);
+
+            socket.on('online_users', (users) => {
+                onlineUsers = users;
+                loadFriends();
+                loadUsers();
+            });
+
+            socket.on('receive_message', (data) => {
+                if (selectedFriend && selectedFriend.id == data.senderId) {
+                    displayMessage(data.message, data.senderId, new Date(data.timestamp));
+                }
+            });
+
+            socket.on('receive_image', (data) => {
+                if (selectedFriend && selectedFriend.id == data.senderId) {
+                    displayImage(data.imageData, data.senderId);
+                }
+            });
+
+            socket.on('user_typing', (data) => {
+                if (selectedFriend && selectedFriend.id == data.senderId) {
+                    showTypingIndicator();
+                }
+            });
+
+            loadFriends();
+            loadUsers();
+        });
+
+        function loadFriends() {
+            fetch(`/friends/${currentUser.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const list = document.getElementById('friendsList');
+                    if (data.friends.length === 0) {
+                        list.innerHTML = '<p>No friends yet.</p>';
+                        return;
+                    }
+
+                    list.innerHTML = data.friends.map(friend => `
+                        <div class="friend-item ${onlineUsers.includes(friend.id) ? 'online' : 'offline'}" onclick="selectFriend(${JSON.stringify(friend).replace(/"/g, '&quot;')})">
+                            <div class="friend-avatar">👤</div>
+                            <div class="friend-info">
+                                <div class="friend-name">${friend.nickname}</div>
+                                <div class="friend-status">${onlineUsers.includes(friend.id) ? '🟢 Online' : '⚪ Offline'}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                });
+        }
+
+        function loadUsers() {
+            fetch(`/users/${currentUser.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const list = document.getElementById('usersList');
+                    const userItems = data.users.filter(u => u.id != currentUser.id).map(user => `
+                        <div class="user-item">
+                            <div class="user-info">
+                                <div class="user-name">${user.nickname}</div>
+                                <div class="user-username">@${user.username}</div>
+                            </div>
+                            <button class="btn-small" onclick="addFriend(${user.id}, '${user.nickname}')">Add</button>
+                        </div>
+                    `).join('');
+                    
+                    list.innerHTML = userItems || '<p>No users available.</p>';
+                });
+        }
+
+        function selectFriend(friend) {
+            selectedFriend = friend;
+            document.getElementById('chatInfo').innerHTML = `<h3>${friend.nickname}</h3>`;
+            loadChatHistory();
+            
+            // Highlight selected friend in sidebar
+            document.querySelectorAll('.friend-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+        }
+
+        function loadChatHistory() {
+            if (!selectedFriend) return;
+            
+            fetch(`/messages/${currentUser.id}/${selectedFriend.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const messagesDiv = document.getElementById('chatMessages');
+                    
+                    if (data.messages.length === 0) {
+                        messagesDiv.innerHTML = '<div class="welcome-message"><p>No messages yet. Start the conversation!</p></div>';
+                        return;
+                    }
+                    
+                    messagesDiv.innerHTML = data.messages.map(msg => {
+                        if (msg.message) {
+                            return `
+                                <div class="message ${msg.sender_id == currentUser.id ? 'sent' : 'received'}">
+                                    <div class="message-content">${escapeHtml(msg.message)}</div>
+                                    <div class="message-time">${new Date(msg.created_at).toLocaleTimeString()}</div>
+                                </div>
+                            `;
+                        } else if (msg.image_data) {
+                            return `
+                                <div class="message ${msg.sender_id == currentUser.id ? 'sent' : 'received'}">
+                                    <img src="${msg.image_data}" class="message-image" onclick="this.style.maxWidth = this.style.maxWidth === '100%' ? '300px' : '100%'">
+                                    <div class="message-time">${new Date(msg.created_at).toLocaleTimeString()}</div>
+                                </div>
+                            `;
+                        }
+                    }).join('');
+                    
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                })
+                .catch(err => console.error('Error loading chat history:', err));
+        }
+
+        function addFriend(friendId, friendName) {
+            fetch('/add-friend', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: currentUser.id, friendId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`${friendName} added to friends!`);
+                    loadFriends();
+                    loadUsers();
+                } else {
+                    alert(data.message);
+                }
+            });
+        }
+
+        function sendMessage() {
+            if (!selectedFriend) {
+                alert('Select a friend first!');
+                return;
+            }
+
+            const message = document.getElementById('messageInput').value.trim();
+            if (!message) return;
+
+            const timestamp = new Date();
+            socket.emit('send_message', {
+                senderId: currentUser.id,
+                receiverId: selectedFriend.id,
+                message,
+                timestamp
+            });
+
+            displayMessage(message, currentUser.id, timestamp);
+            document.getElementById('messageInput').value = '';
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function triggerImageInput() {
+            document.getElementById('imageInput').click();
+        }
+
+        document.getElementById('imageInput').addEventListener('change', (e) => {
+            if (!selectedFriend) {
+                alert('Select a friend first!');
+                return;
+            }
+
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                const imageData = event.target.result;
+                socket.emit('send_image', {
+                    senderId: currentUser.id,
+                    receiverId: selectedFriend.id,
+                    imageData,
+                    timestamp: new Date()
+                });
+
+                displayImage(imageData, currentUser.id);
+            };
+
+            reader.readAsDataURL(file);
+        });
+
+        function displayMessage(message, senderId, timestamp) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const msgEl = document.createElement('div');
+            msgEl.className = `message ${senderId == currentUser.id ? 'sent' : 'received'}`;
+            msgEl.innerHTML = `
+                <div class="message-content">${escapeHtml(message)}</div>
+                <div class="message-time">${timestamp.toLocaleTimeString()}</div>
+            `;
+            messagesDiv.appendChild(msgEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function displayImage(imageData, senderId) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const msgEl = document.createElement('div');
+            msgEl.className = `message ${senderId == currentUser.id ? 'sent' : 'received'}`;
+            msgEl.innerHTML = `
+                <img src="${imageData}" class="message-image">
+                <div class="message-time">${new Date().toLocaleTimeString()}</div>
+            `;
+            messagesDiv.appendChild(msgEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            document.getElementById('typingIndicator').style.display = 'block';
+            setTimeout(() => {
+                document.getElementById('typingIndicator').style.display = 'none';
+            }, 3000);
+        }
+
+        function toggleProfileMenu() {
+            const menu = document.getElementById('profileMenu');
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function viewProfile() {
+            const content = `
+                <p><strong>Username:</strong> ${currentUser.username}</p>
+                <p><strong>Nickname:</strong> ${currentUser.nickname}</p>
+                <p><strong>Status:</strong> ${currentUser.isAdmin ? 'Admin' : 'User'}</p>
+            `;
+            document.getElementById('profileContent').innerHTML = content;
+            document.getElementById('profileModal').style.display = 'block';
+        }
+
+        function closeProfileModal() {
+            document.getElementById('profileModal').style.display = 'none';
+        }
+
+        function viewAllUsers() {
+            fetch(`/admin/users/${currentUser.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const content = data.users.map(user => `
+                        <div class="admin-user-item">
+                            <span>${user.nickname} (@${user.username})</span>
+                            <button class="btn-small delete" onclick="deleteUser(${user.id})">Delete</button>
+                        </div>
+                    `).join('');
+                    document.getElementById('usersContent').innerHTML = content;
+                    document.getElementById('usersModal').style.display = 'block';
+                });
+        }
+
+        function closeUsersModal() {
+            document.getElementById('usersModal').style.display = 'none';
+        }
+
+        function viewAllChats() {
+            fetch(`/admin/chats/${currentUser.id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const content = data.messages.map(msg => `
+                        <div class="admin-chat-item">
+                            <strong>${msg.sender} → ${msg.receiver}:</strong>
+                            <p>${msg.message || '[Image]'}</p>
+                        </div>
+                    `).join('');
+                    document.getElementById('chatsContent').innerHTML = content || '<p>No chats found.</p>';
+                    document.getElementById('chatsModal').style.display = 'block';
+                });
+        }
+
+        function closeChatsModal() {
+            document.getElementById('chatsModal').style.display = 'none';
+        }
+
+        function deleteUser(userId) {
+            if (confirm('Delete this user?')) {
+                fetch(`/admin/user/${currentUser.id}/${userId}`, { method: 'DELETE' })
+                    .then(r => r.json())
+                    .then(data => {
+                        alert(data.message);
+                        viewAllUsers();
+                    });
+            }
+        }
+
+        function searchUsers() {
+            const query = document.getElementById('searchBox').value.toLowerCase();
+            // Search implementation
+        }
+
+        function logout() {
+            localStorage.removeItem('user');
+            window.location.href = 'index.html';
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // Close modals when clicking outside
+        window.onclick = (event) => {
+            const profileMenu = document.getElementById('profileMenu');
+            const profileBtn = document.querySelector('.user-profile-btn');
+            if (event.target != profileBtn && !profileBtn.contains(event.target)) {
+                profileMenu.style.display = 'none';
+            }
+        };
+    </script>
+</body>
+</html>

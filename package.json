@@ -1,0 +1,21 @@
+{
+  "name": "mingle",
+  "version": "1.0.0",
+  "description": "deplopy link",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kanna-7/mingle.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kanna-7/mingle/issues"
+  },
+  "homepage": "https://github.com/kanna-7/mingle#readme"
+}
